@@ -19,6 +19,7 @@ type LoginState struct {
 	Blocked    bool      `json:"blocked,omitempty"`
 	RetryAfter time.Time `json:"retry_after,omitempty"`
 	Code       string    `json:"code,omitempty"`
+	Attempts   int       `json:"attempts,omitempty"`
 }
 
 // LoginGuard coordinates clients/processes using the same account key. Load and
@@ -75,6 +76,13 @@ func (c *Client) protectedLoginLocked(ctx context.Context, provider CredentialPr
 		return nil, err
 	}
 	defer unlock()
+	if c.loginGuard != nil {
+		state, err := c.loginGuard.Load(ctx, c.accountKey)
+		if err != nil {
+			return nil, fmt.Errorf("%w: load login protection: %v", ErrSessionPersistence, err)
+		}
+		c.loginState = state
+	}
 	// Always reload after taking the shared lock: another process may have
 	// renewed the session while this client was waiting.
 	if c.sessionStore != nil && (!c.sessionLoaded || c.loginGuard != nil) {
@@ -92,20 +100,19 @@ func (c *Client) protectedLoginLocked(ctx context.Context, provider CredentialPr
 	if verify || len(c.jar.Cookies(c.baseURL)) > 0 {
 		info, err := c.sessionOnce(ctx)
 		if err == nil {
+			// A confirmed session resolves an earlier ambiguous login response.
+			if c.loginState != (LoginState{}) {
+				if err := c.storeLoginState(ctx, LoginState{}); err != nil {
+					return nil, err
+				}
+			}
 			return info, nil
 		}
 		if !errors.Is(err, ErrSessionExpired) {
 			return nil, err
 		}
 	}
-	if c.loginGuard != nil {
-		state, err := c.loginGuard.Load(ctx, c.accountKey)
-		if err != nil {
-			return nil, fmt.Errorf("%w: load login protection: %v", ErrSessionPersistence, err)
-		}
-		c.loginState = state
-	}
-	if c.loginState.Blocked {
+	if c.loginState.Blocked || c.loginState.Attempts >= 3 {
 		return nil, ErrLoginBlocked
 	}
 	if time.Now().Before(c.loginState.RetryAfter) {
@@ -121,7 +128,7 @@ func (c *Client) protectedLoginLocked(ctx context.Context, provider CredentialPr
 	if strings.TrimSpace(username) == "" || password == "" {
 		return nil, ErrCredentialsUnavailable
 	}
-	state := LoginState{Pending: true, RetryAfter: time.Now().Add(5 * time.Minute)}
+	state := LoginState{Pending: true, Attempts: c.loginState.Attempts + 1, RetryAfter: time.Now().Add(5 * time.Minute)}
 	if err := c.storeLoginState(ctx, state); err != nil {
 		return nil, err
 	}
@@ -136,6 +143,7 @@ func (c *Client) protectedLoginLocked(ctx context.Context, provider CredentialPr
 		if errors.Is(err, ErrSessionExpired) {
 			state.Blocked = true
 		}
+		state.Blocked = state.Blocked || state.Attempts >= 3
 		// Keep the pre-request cooldown even when the request context expired.
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()

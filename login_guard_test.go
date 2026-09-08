@@ -121,3 +121,57 @@ func TestSessionReadFailureDoesNotRequestCredentialsOrLogin(t *testing.T) {
 		t.Fatalf("session failure triggered credentials: %v %d", err, calls.Load())
 	}
 }
+
+func TestThreeAmbiguousLoginAttemptsRequireExplicitReset(t *testing.T) {
+	var posts atomic.Int64
+	guard := &testLoginGuard{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			posts.Add(1)
+			http.Error(w, "down", 503)
+			return
+		}
+		fmt.Fprint(w, `{"code":"00000","data":{"isLogin":0}}`)
+	}))
+	defer server.Close()
+	store := &memorySessionStore{}
+	for i := 0; i < 5; i++ {
+		// Advance only the persisted deadline, simulating separate processes
+		// started after each five-minute cooldown, including crash recovery.
+		guard.state.RetryAfter = time.Now().Add(-time.Second)
+		c, err := New(WithBaseURL(server.URL), WithSessionStore("one", store), WithLoginGuard(guard))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Login(context.Background(), "one", "secret")
+		if i >= 3 && !errors.Is(err, ErrLoginBlocked) {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	if posts.Load() != 3 || !guard.state.Blocked {
+		t.Fatalf("posts=%d state=%+v", posts.Load(), guard.state)
+	}
+}
+
+func TestValidCachedSessionClearsAmbiguousLoginProtection(t *testing.T) {
+	guard := &testLoginGuard{state: LoginState{Pending: true, Blocked: true, Attempts: 3, RetryAfter: time.Now().Add(time.Hour)}}
+	store := &memorySessionStore{}
+	var posts atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			posts.Add(1)
+		}
+		fmt.Fprint(w, `{"code":"00000","data":{"isLogin":1,"userId":"one"}}`)
+	}))
+	defer server.Close()
+	c, err := New(WithBaseURL(server.URL), WithSessionStore("one", store), WithLoginGuard(guard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Authenticate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if posts.Load() != 0 || guard.state != (LoginState{}) {
+		t.Fatalf("posts=%d state=%+v", posts.Load(), guard.state)
+	}
+}
