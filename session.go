@@ -24,9 +24,10 @@ type sessionData struct {
 	SessionInfo
 }
 
-// Login authenticates with JoinQuant's password-login endpoint and stores the
-// returned cookies only in the client's cookie jar. Credentials are never
-// retained by Client.
+// Login reuses a valid session for this client's account before trying the
+// password endpoint. Login protection also applies to explicit calls. Use a
+// separate Client and account-scoped store for each account. Credentials are
+// never retained by Client.
 func (c *Client) Login(ctx context.Context, username, password string) (*SessionInfo, error) {
 	c.authMu.Lock()
 	defer c.authMu.Unlock()

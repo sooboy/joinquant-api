@@ -74,25 +74,6 @@ func (c *Client) Authenticate(ctx context.Context) (*SessionInfo, error) {
 	c.authMu.Lock()
 	defer c.authMu.Unlock()
 
-	if !c.sessionLoaded {
-		c.sessionLoaded = true
-		if c.sessionStore != nil {
-			state, err := c.sessionStore.Load(ctx, c.accountKey)
-			switch {
-			case err == nil && state != nil:
-				c.jar.Replace(c.baseURL, state.httpCookies())
-			case err == nil || errors.Is(err, ErrSessionNotFound):
-			case err != nil:
-				return nil, fmt.Errorf("%w: load: %v", ErrSessionPersistence, err)
-			}
-		}
-	}
-
-	if info, err := c.sessionOnce(ctx); err == nil {
-		return info, nil
-	} else if !errors.Is(err, ErrSessionExpired) {
-		return nil, err
-	}
 	return c.loginFromProviderLocked(ctx)
 }
 
@@ -113,29 +94,13 @@ func (c *Client) reauthenticate(ctx context.Context, observedGeneration uint64) 
 }
 
 func (c *Client) loginFromProviderLocked(ctx context.Context) (*SessionInfo, error) {
-	if c.credentialProvider == nil {
-		return nil, ErrCredentialsUnavailable
-	}
-	username, password, err := c.credentialProvider.Credentials(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCredentialsUnavailable, err)
-	}
-	if strings.TrimSpace(username) == "" || password == "" {
-		return nil, ErrCredentialsUnavailable
-	}
-	return c.loginLocked(ctx, username, password)
+	return c.protectedLoginLocked(ctx, c.credentialProvider, true)
 }
 
 func (c *Client) loginLocked(ctx context.Context, username, password string) (*SessionInfo, error) {
-	info, err := c.loginOnce(ctx, username, password)
-	if err != nil {
-		return nil, err
-	}
-	c.authGeneration++
-	if err := c.saveSession(ctx); err != nil {
-		return nil, err
-	}
-	return info, nil
+	return c.protectedLoginLocked(ctx, CredentialProviderFunc(func(context.Context) (string, string, error) {
+		return username, password, nil
+	}), false)
 }
 
 func (c *Client) saveSession(ctx context.Context) error {

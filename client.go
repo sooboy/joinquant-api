@@ -41,6 +41,8 @@ type Client struct {
 	authMu             sync.Mutex
 	authGeneration     uint64
 	sessionLoaded      bool
+	loginGuard         LoginGuard
+	loginState         LoginState
 }
 
 type clientConfig struct {
@@ -51,6 +53,7 @@ type clientConfig struct {
 	sessionStore       SessionStore
 	credentialProvider CredentialProvider
 	accountKey         string
+	loginGuard         LoginGuard
 }
 
 // Option configures a Client.
@@ -135,6 +138,9 @@ func New(options ...Option) (*Client, error) {
 			return nil, err
 		}
 	}
+	if cfg.loginGuard != nil && cfg.sessionStore == nil {
+		return nil, fmt.Errorf("login guard requires an account-scoped session store")
+	}
 
 	baseURL, err := url.Parse(cfg.baseURL)
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
@@ -161,6 +167,7 @@ func New(options ...Option) (*Client, error) {
 	return &Client{
 		baseURL: baseURL, httpClient: cfg.httpClient, userAgent: cfg.userAgent, jar: jar,
 		sessionStore: cfg.sessionStore, credentialProvider: cfg.credentialProvider, accountKey: cfg.accountKey,
+		loginGuard: cfg.loginGuard,
 	}, nil
 }
 

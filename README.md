@@ -75,6 +75,12 @@ Keychain 或业务配置。`SessionStore` 保存的是 bearer Cookie，具体实
 
 如果账号触发图片验证码，`Login` 会返回包含聚宽错误码的 `*APIError`。此时应由上层完成交互式登录，再通过 `WithCookies` 注入会话 Cookie；不要把 Cookie 写入日志或代码仓库。
 
+`Authenticate` 和 `Login` 优先复用该 Client 账户的有效会话。普通网络或接口读取错误不会触发密码登录；失败登录默认冷却 5 分钟，明确的账号/验证码等拒绝进入 `ErrLoginBlocked`，需要用户处理。只读请求续登仍最多重试一次，回测创建、提交、导出等写请求不会自动重放。
+
+多 Client / 多进程共享一个账户时，同时配置 `WithSessionStore(accountID, store)` 和 `WithLoginGuard(guard)`。`LoginGuard` 提供按账户的跨进程 `Lock` 及 `LoginState` 的原子 `Load` / `Save`；SDK 拿锁后重新读取、验证缓存，其他进程已续期就不再登录。密码请求前持久化冷却标记，崩溃重启也不能立即重发。`LoginState` 不含密码或远端消息文本。上层需复用每个账户的 Client，保护会话和凭据文件。
+
+`ResetLoginProtection(ctx)` 仅用于用户明确修正凭据或完成验证后的操作，不得放进自动重试循环。未配置持久化 Guard 时，保护只在当前 Client 内生效。
+
 ## 分层边界
 
 本库是纯接口层，只返回聚宽策略、仓位和成交数据，不包含资金分配、目标股数、
