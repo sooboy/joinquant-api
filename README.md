@@ -68,6 +68,8 @@ func main() {
 }
 ```
 
+`SessionInfo.UniqueKey` 是账户绑定和去重使用的稳定标识。`SessionInfo.UserID` 是网页返回的动态不透明编号，同一有效会话连续查询也会变化，不能作为持久账户主键。缺少 `UniqueKey` 时，上层应停止绑定并报告协议问题，不能因此反复登录。
+
 `SessionStore` 和 `CredentialProvider` 是抽象接口：库不依赖文件、数据库、
 Keychain 或业务配置。`SessionStore` 保存的是 bearer Cookie，具体实现必须对其
 加密并限制访问权限。所有只读接口遇到会话过期时只自动续期一次；并发请求只会

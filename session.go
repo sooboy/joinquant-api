@@ -11,12 +11,15 @@ import (
 )
 
 type SessionInfo struct {
-	LoggedIn bool   `json:"-"`
-	UserID   string `json:"userId"`
-	UserName string `json:"userName"`
-	Alias    string `json:"alias"`
-	VIPType  string `json:"vipType"`
-	Level    int    `json:"level"`
+	LoggedIn bool `json:"-"`
+	// UserID is an opaque page identifier which can change on every response.
+	// Use UniqueKey, not UserID, when binding a persisted account identity.
+	UserID    string `json:"userId"`
+	UniqueKey string `json:"uniqueKey"`
+	UserName  string `json:"userName"`
+	Alias     string `json:"alias"`
+	VIPType   string `json:"vipType"`
+	Level     int    `json:"level"`
 }
 
 type sessionData struct {
